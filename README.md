@@ -1,9 +1,3 @@
-# Current diagnostic mode
-
-POST to `/webhook/evolution` (singular `webhook`). The handler checks the header or query token, prints content type, body length, the first 3000 raw bytes, and the complete parsed JSON payload, then returns `{"status":"ok"}`. Invalid authentication returns 401; invalid JSON returns 400. It does not echo messages or enforce the former 256 KiB body limit. Full payload contents are visible in console logs.
-
-The echo-mode instructions below describe the previous implementation and do not apply while this diagnostic handler is active.
-
 # Home Assistant WhatsApp echo
 
 Text-only FastAPI MVP for your Evolution instance `home-assistance`.
@@ -32,13 +26,13 @@ The `.env.example` is a reference, not loaded automatically. Never commit real s
 
 In Evolution Manager, open the instance → Events → Webhook (labels may vary).
 - Enabled: ON
-- URL: `https://YOUR-FASTAPI-DOMAIN/webhooks/evolution`
+- URL: `https://YOUR-FASTAPI-DOMAIN/webhook/evolution`
 - Webhook by Events: OFF
 - Webhook Base64: OFF
 - Event: MESSAGES_UPSERT
 - If custom headers are supported, set `x-webhook-secret` to WEBHOOK_SECRET.
 - If custom headers aren't available, use this URL instead:
-  `https://YOUR-FASTAPI-DOMAIN/webhooks/evolution?token=YOUR_WEBHOOK_SECRET`
+  `https://YOUR-FASTAPI-DOMAIN/webhook/evolution?token=YOUR_WEBHOOK_SECRET`
 - Save.
 
 The query-token option is a compatibility fallback: its URL is a credential and can appear in proxy logs. Keep it private. Application access logs are disabled in the Docker start command. Prefer the header option when supported.
@@ -78,7 +72,7 @@ Only individual text messages up to 4096 characters are echoed. Groups, media, b
 
 Duplicate suppression is in memory for 24 hours, up to 10,000 successful messages. It resets on restart and does not work across replicas. A send timeout or process crash after an accepted send can cause a duplicate on redelivery. This is not exactly-once delivery. Failed sends return 502; automatic webhook retry behavior depends on your Evolution configuration. There is no durable queue or automatic retry worker. Add Redis/Postgres-backed jobs before production use.
 
-The outbound URL and API key always come from environment variables, never webhook payload fields. Incoming supported text is logged at INFO level using an escaped representation. Phone numbers, API keys, webhook secrets, and upstream response bodies are not logged by these application logs.
+The outbound URL and API key always come from environment variables, never webhook payload fields. Incoming supported text is logged at INFO level using an escaped representation. Diagnostic console prints also include content type, body length, the first 3000 raw bytes, and the full parsed payload. Any private fields included in that payload will therefore appear in logs. Authentication headers and query tokens are not printed; only token presence is shown.
 
 ## Automated tests
 
