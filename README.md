@@ -41,11 +41,11 @@ Do NOT change Meta's existing callback URL `/webhook/meta`, or the WABA subscrip
 
 ## Test
 
-Send `Hi Sachin` from your personal WhatsApp to the business number. Expect exactly `Hi Sachin` back. New FastAPI deploy logs should show `Echo sent successfully`.
+Send `Hi Sachin` from your personal WhatsApp to the business number. Expect exactly `Hi Sachin` back. FastAPI deploy logs show webhook receipt, parsed event/instance, incoming text, skip reasons, send attempts/results, and completion. Each webhook has a `request=` ID so you can follow its flow. Search for `inbound text` to see the received message and `Echo sent successfully` to confirm the reply.
 
 - No request at FastAPI: check Evolution webhook URL, enabled status, and MESSAGES_UPSERT.
 - HTTP 401: webhook secret doesn't match.
-- HTTP 502: check Evolution URL/key/instance, then Evolution logs. The app does not log upstream bodies or message content.
+- HTTP 502: check Evolution URL/key/instance, then Evolution logs. The failure log includes the error type and upstream HTTP status, without upstream response bodies.
 - HTTP 200 with echoed=0: event was ignored (outgoing, wrong instance, duplicate, unsupported payload, group, or media).
 
 ## Local run
@@ -72,7 +72,7 @@ Only individual text messages up to 4096 characters are echoed. Groups, media, b
 
 Duplicate suppression is in memory for 24 hours, up to 10,000 successful messages. It resets on restart and does not work across replicas. A send timeout or process crash after an accepted send can cause a duplicate on redelivery. This is not exactly-once delivery. Failed sends return 502; automatic webhook retry behavior depends on your Evolution configuration. There is no durable queue or automatic retry worker. Add Redis/Postgres-backed jobs before production use.
 
-The outbound URL and API key always come from environment variables, never webhook payload fields. Message text and phone numbers are not logged by the application.
+The outbound URL and API key always come from environment variables, never webhook payload fields. Incoming supported text is logged at INFO level using an escaped representation. Phone numbers, API keys, webhook secrets, and upstream response bodies are not logged by these application logs.
 
 ## Automated tests
 

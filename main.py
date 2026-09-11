@@ -12,7 +12,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 
 log = logging.getLogger('echo')
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
 
@@ -29,7 +29,11 @@ async def lifespan(app: FastAPI):
         headers={'apikey': os.environ['EVOLUTION_API_KEY']}, timeout=15.0
     ) as client:
         app.state.client = client
-        yield
+        log.info('App ready; instance=%r', app.state.instance)
+        try:
+            yield
+        finally:
+            log.info('App shutting down')
 
 
 app = FastAPI(title='Home Assistant Echo', lifespan=lifespan)
@@ -42,68 +46,92 @@ async def health():
 
 @app.post('/webhooks/evolution')
 async def webhook(request: Request):
+    trace = secrets.token_hex(4)
+
+    def reached(stage, *args):
+        log.info('request=%s ' + stage, trace, *args)
+
+    reached('Webhook received')
     # Prefer a custom header. Query token supports Manager versions without headers.
     supplied = request.headers.get('x-webhook-secret') or request.query_params.get('token', '')
     if not secrets.compare_digest(supplied, request.app.state.secret):
+        reached('Webhook rejected: invalid secret')
         raise HTTPException(401, 'Invalid webhook secret')
     raw = bytearray()
     async for chunk in request.stream():
         raw.extend(chunk)
         if len(raw) > 262144:
+            reached('Webhook rejected: payload exceeds 256 KiB')
             raise HTTPException(413, 'Payload too large; disable webhook Base64')
     import json
     try:
         payload = json.loads(raw)
     except (ValueError, UnicodeDecodeError):
+        reached('Webhook rejected: invalid JSON')
         raise HTTPException(400, 'Invalid JSON')
     if not isinstance(payload, dict):
+        reached('Webhook rejected: expected an object')
         raise HTTPException(400, 'Expected an object')
     state = request.app.state
     event = str(payload.get('event', '')).lower().replace('_', '.')
+    reached('Payload parsed; event=%r instance=%r', event, payload.get('instance'))
     if event != 'messages.upsert' or payload.get('instance') != state.instance:
+        reached('Webhook ignored: unsupported event or wrong instance')
         return {'status': 'ignored', 'echoed': 0}
     data = payload.get('data')
     entries = data if isinstance(data, list) else [data]
     sent = 0
-    for entry in entries:
+    reached('Processing batch; entries=%d', len(entries))
+    for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
+            reached('Entry %d ignored: expected an object', index)
             continue
         key = entry.get('key') or {}
         message = entry.get('message') or {}
         if not isinstance(key, dict) or not isinstance(message, dict):
+            reached('Entry %d ignored: invalid key or message', index)
             continue
         # Missing fromMe is ignored too: never assume an event is inbound.
         if key.get('fromMe') is not False:
+            reached('Entry %d ignored: outgoing message or missing fromMe', index)
             continue
         jid = key.get('remoteJid', '')
         mid = key.get('id')
         if not isinstance(jid, str) or not re.fullmatch(r'\d{7,15}@s\.whatsapp\.net', jid):
+            reached('Entry %d ignored: unsupported sender (group, broadcast, LID, or invalid JID)', index)
             continue  # Ignore groups, broadcasts, and unresolved LID identifiers.
         extended = message.get('extendedTextMessage') or {}
         text = message.get('conversation')
         if text is None and isinstance(extended, dict):
             text = extended.get('text')
         if not isinstance(text, str) or not text or len(text) > 4096 or not isinstance(mid, str) or not mid:
+            reached('Entry %d ignored: missing/invalid text or message ID, or text exceeds 4096 characters', index)
             continue
+        reached('Entry %d inbound text; message_id=%r text=%r', index, mid, text)
         dedup_key = (jid, mid)
         # Serial processing is intentional for this small, single-worker MVP.
         async with state.lock:
             now = time.monotonic()
             state.seen = {k: expiry for k, expiry in state.seen.items() if expiry > now}
             if dedup_key in state.seen:
+                reached('Entry %d ignored: duplicate message_id=%r', index, mid)
                 continue
+            reached('Entry %d sending echo; message_id=%r', index, mid)
             try:
                 response = await state.client.post(
                     state.base_url + '/message/sendText/' + quote(state.instance, safe=''),
                     json={'number': jid.split('@')[0], 'text': text},
                 )
                 response.raise_for_status()
-            except httpx.HTTPError:
-                log.warning('Echo send failed; returning 502 (no message content logged)')
+            except httpx.HTTPError as exc:
+                status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                log.warning('request=%s Entry %d echo failed; message_id=%r error=%s upstream_status=%s; returning 502',
+                            trace, index, mid, type(exc).__name__, status)
                 raise HTTPException(502, 'Evolution send failed')
             if len(state.seen) >= 10000:
                 state.seen.pop(next(iter(state.seen)))
             state.seen[dedup_key] = time.monotonic() + 86400
             sent += 1
-            log.info('Echo sent successfully')
+            reached('Echo sent successfully; entry=%d message_id=%r upstream_status=%d', index, mid, response.status_code)
+    reached('Webhook completed; echoed=%d', sent)
     return {'status': 'ok', 'echoed': sent}
