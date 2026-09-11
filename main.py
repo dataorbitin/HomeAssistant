@@ -46,6 +46,8 @@ async def health():
 
 @app.post('/webhooks/evolution')
 async def webhook(request: Request):
+    log.info('reached at webhook=====================')
+    print('reached at webhook=====================', flush=True)
     trace = secrets.token_hex(4)
 
     def reached(stage, *args):
