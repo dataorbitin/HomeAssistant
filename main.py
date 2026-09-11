@@ -51,6 +51,7 @@ async def webhook(request: Request):
     def reached(stage, *args):
         log.info('request=%s ' + stage, trace, *args)
 
+    reached('webhook:webhook')
     reached('Webhook received')
     # Prefer a custom header. Query token supports Manager versions without headers.
     supplied = request.headers.get('x-webhook-secret') or request.query_params.get('token', '')
