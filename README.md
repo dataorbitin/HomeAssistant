@@ -1,3 +1,9 @@
+# Current diagnostic mode
+
+POST to `/webhook/evolution` (singular `webhook`). The handler checks the header or query token, prints content type, body length, the first 3000 raw bytes, and the complete parsed JSON payload, then returns `{"status":"ok"}`. Invalid authentication returns 401; invalid JSON returns 400. It does not echo messages or enforce the former 256 KiB body limit. Full payload contents are visible in console logs.
+
+The echo-mode instructions below describe the previous implementation and do not apply while this diagnostic handler is active.
+
 # Home Assistant WhatsApp echo
 
 Text-only FastAPI MVP for your Evolution instance `home-assistance`.
